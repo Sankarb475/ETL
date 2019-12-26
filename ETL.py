@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Dec  5 18:40:31 2019
+Created on Thu Dec 26 12:46:39 2019
 
-@author: sankar biswas
+@author: sbiswas149
 """
+
 import pandas as pd
 from cassandra.cluster import Cluster
 import pyspark
@@ -13,6 +14,8 @@ from pyspark.sql.functions import col, expr, when, coalesce
 import mysql.connector
 import numpy as np
 import math 
+from neo4j import GraphDatabase
+from neo4j.v1 import GraphDatabase, basic_auth
 
 def handlingNA(a):
     for i in range(len(a)):
@@ -20,13 +23,30 @@ def handlingNA(a):
             a[i] = np.NaN
     return a
 
+def metadataCapturing(option, name, rows):
+    driver = GraphDatabase.driver("bolt://localhost", auth=basic_auth(user = "neo4j", password = "1097"))
+    session = driver.session()
+    query1 = """MERGE (N:Entity{name:"%s"})
+                SET N.Age = %d
+                RETURN N"""%(name,rows)
+    session.run(query1)
+    if option == "MySQL":
+        query2 = """MATCH (P:Entity{name:"Cassandra"})
+                    MATCH (N:Entity{name:"MySQL"})
+                    MERGE (P)-[:Success]->(N)"""
+        session.run(query2)
+    session.close()
+    
 # Fetching raw data from Cassandra
 def Cassandra_integration():
-    #Cassandra host IP has to be uploaded
-    cluster = Cluster(['xx.xx.xx.xx'])
+    cluster = Cluster(['10.196.104.21'])
     session = cluster.connect('project')
     query = "select * from housingdata"
     df = pd.DataFrame(list(session.execute(query)))
+    
+    queryCount = "select count(*) from housingdata"
+    count = pd.DataFrame(list(session.execute(queryCount)))
+    metadataCapturing("Cassandra", "Cassandra", count["count"].tolist()[0])
     
     # filtering out the unnecessary columns
     df = df.rename(columns = {"postalcode":"postal_code", "from_price":"price_from","to_price":"price_to",
@@ -117,7 +137,7 @@ def getPrice():
 
     df['property_features'] = df['property_features'].str.strip().str[:-2]
     
-    print(df)
+    #print(df)
     return df
 
 # removing duplicate features from feature list of the raw data
@@ -174,7 +194,7 @@ def get_features():
 
     df1.to_csv(r"C:\Users\sbiswas149\Applications\Cassandra\data.csv")
     
-    print(df1)
+    #print(df1)
     return df1
 
 #pyspark ETL, filling up empty price values using median of the range
@@ -227,9 +247,9 @@ def WritingToMysql():
 
     dataMysql = df123[["postal_code","price_from","price_to","property_type","beds","baths","parking","Area", "State","countOfFeatures"]].values.tolist()
 
-    # password and host IP has to be given 
-    cnx = mysql.connector.connect(user='root', password='xx.xx.xx.xx',
-                              host='xx.xx.xx.xx',
+    
+    cnx = mysql.connector.connect(user='root', password='admin123',
+                              host='10.196.104.221',
                               database='visualize')
     """
     
@@ -242,6 +262,13 @@ def WritingToMysql():
     for i in dataMysql:
         j = tuple(i)
         cursor.execute(query1, j)
+        
+    queryMCount = "select count(*) from visualize.test_data"
+    rows = cursor.execute(queryMCount) 
+    records = cursor.fetchall()
+    dataM = pd.DataFrame(records)
+    metadataCapturing("MySQL","MySQL", dataM[0].tolist()[0])
+    
     cnx.commit()
     cursor.close()
     cnx.close()
@@ -250,8 +277,4 @@ def WritingToMysql():
 if __name__ == '__main__':
     WritingToMysql()
     
-    
-
-
-
-    
+  
