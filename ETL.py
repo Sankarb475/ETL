@@ -247,6 +247,8 @@ def WritingToMysql():
 
     dataMysql = df123[["postal_code","price_from","price_to","property_type","beds","baths","parking","Area", "State","countOfFeatures"]].values.tolist()
 
+    filedata = df123[["postal_code","price_from","price_to","property_type","beds","baths","parking","Area", "State","countOfFeatures"]]
+    filedata.to_csv(r"C:\Users\sbiswas149\Applications\Cassandra\MLdata.csv")
     
     cnx = mysql.connector.connect(user='root', password='admin123',
                               host='10.196.104.221',
