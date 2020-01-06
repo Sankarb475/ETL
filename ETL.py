@@ -59,6 +59,7 @@ def Cassandra_integration():
     
     df = df.apply(lambda x: handlingNA(x.tolist()))
     
+    df = df.drop_duplicates()
     
     # dropping the rows which has any "Na" values 
     df = df.dropna(subset=["postal_code", "price_from", "price_to", "beds", "baths", "parking", "name_of_property","property_features"])
