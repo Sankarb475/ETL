@@ -2,7 +2,7 @@
 """
 Created on Thu Dec 26 12:46:39 2019
 
-@author: sankar biswas
+@author: sbiswas149
 """
 
 import pandas as pd
@@ -16,6 +16,9 @@ import numpy as np
 import math 
 from neo4j import GraphDatabase
 from neo4j.v1 import GraphDatabase, basic_auth
+from pyspark.sql.types import LongType
+from pyspark.sql.functions import udf
+
 
 def handlingNA(a):
     for i in range(len(a)):
@@ -113,8 +116,10 @@ def priceExtraction(a):
     
     #for values like 1.1875 
     a = float(a)
-    if a < 10:
+    if a <= 10:
         return (a*1000000)
+    elif 11 <= a and a < 1000:
+        return (a*1000)
     else:    
         return a 
 
@@ -122,6 +127,7 @@ def priceExtraction(a):
 def getPrice():
     df = Cassandra_integration()
     df["Price123"] = df["price"].apply(lambda x: priceExtraction(x))
+    #df["Price123"] = df
     df = df.drop(['price'], axis =1)
     
     df['beds'] = df['beds'].str.strip()
@@ -198,6 +204,17 @@ def get_features():
     #print(df1)
     return df1
 
+"""
+def priceUDF(price, priceFrom, priceTo):
+    if price >= priceFrom and price <= priceTo:
+        return price
+    elif price < priceFrom:
+        price = price * 10
+        if price > priceTo:
+            return (priceFrom+priceTo)//2
+        return priceUDF(price, priceFrom, priceTo)
+"""
+   
 #pyspark ETL, filling up empty price values using median of the range
 def pyspark():
     conf = SparkConf().setAppName("PySparkApp").setMaster("local")
@@ -205,11 +222,10 @@ def pyspark():
     sc = SparkContext(conf = conf)
 
     #spark = SparkSession.builder.appName("WordCount").master("local").config(conf = conf).getOrCreate()
-    sqlContext = SQLContext(sc)
+    sqlCtx = SQLContext(sc)
     
-    get_features()
-    
-    sdf = sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(r"C:\Users\sbiswas149\Applications\Cassandra\data.csv")
+    df1 = get_features()
+    sdf = sqlCtx.createDataFrame(df1)
 
     ops1 = "(price_from + price_to)/2"
     data = sdf.withColumn("MedianPrice", expr(ops1))
@@ -217,8 +233,20 @@ def pyspark():
     tmp = data.withColumn('final_price', coalesce(data['Price123'],data['MedianPrice']))
 
     finaldata = tmp.drop("price", "disFeature")
+    
+    state = {"VIC" : "Victoria", "WA" : "Western Australia", "ACT": "Australian Capital Territory", "NT": "Northern Territory",
+        "NSW": "New South Wales", "TAS":"Tasmania"}
 
-    finaldataPD = finaldata.toPandas()
+    stateDataP = pd.DataFrame(list(state.items()), columns = ["State", "StateName"])
+
+    stateDataD = sqlCtx.createDataFrame(stateDataP)
+
+    data1 = finaldata.join(stateDataD, on=['State'], how='inner')
+
+    finaldataPD = data1.toPandas()
+    #dataPD["StateName"].unique()
+    
+    sc.stop()
     
     finaldataPD['price_to'] = finaldataPD['price_to'].astype(str).astype(float)
 
@@ -233,22 +261,26 @@ def pyspark():
     df123 = finaldataPD.copy()
 
     df123 = df123.replace({pd.np.nan: None})
-    sc.stop()
+    
+    #print(df123)
     
     return df123
-
 
 #writing the processed data into Mysql
 def WritingToMysql():    
     df123 = pyspark()
-    query1 = ("INSERT INTO visualize.test_data "
+    query1 = ("INSERT INTO visualize.visualise "
               "(postal_code,price_from,price_to,property_type,beds,baths,parking, region, state, features) "
               "VALUES (%s, %s, %s, %s,%s, "
               "%s, %s, %s, %s, %s)")
 
-    dataMysql = df123[["postal_code","price_from","price_to","property_type","beds","baths","parking","Area", "State","countOfFeatures"]].values.tolist()
-
-    filedata = df123[["postal_code","price_from","price_to","property_type","beds","baths","parking","Area", "State","countOfFeatures"]]
+    dataMysql = df123[["postal_code","price_from","price_to","property_type","beds","baths","parking","Area", "StateName","countOfFeatures"]].values.tolist()
+    
+    
+    filedata = df123[["postal_code","price_from","price_to","final_price","property_type","beds","baths","parking","Area", "StateName","countOfFeatures"]]
+    
+    filedata.columns = ["postal_code","price_from","price_to","price","property_type","beds","baths","parking","region", "state","count_of_features"]
+    
     filedata.to_csv(r"C:\Users\sbiswas149\Applications\Cassandra\MLdata.csv")
     
     cnx = mysql.connector.connect(user='root', password='admin123',
@@ -266,7 +298,7 @@ def WritingToMysql():
         j = tuple(i)
         cursor.execute(query1, j)
         
-    queryMCount = "select count(*) from visualize.test_data"
+    queryMCount = "select count(*) from visualize.visualise"
     rows = cursor.execute(queryMCount) 
     records = cursor.fetchall()
     dataM = pd.DataFrame(records)
